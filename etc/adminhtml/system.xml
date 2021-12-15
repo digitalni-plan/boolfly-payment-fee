@@ -13,17 +13,33 @@
                     <label>Enable Payment Method Fee Functionality</label>
                     <source_model>Magento\Config\Model\Config\Source\Yesno</source_model>
                 </field>
-                <field id="fee_type" translate="label" type="select" sortOrder="11" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="fee_type" translate="label" type="select" sortOrder="20" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Calculate Handling Fee</label>
                     <source_model>Magento\Shipping\Model\Source\HandlingType</source_model>
+                    <depends>
+                        <field id="enabled">1</field>
+                    </depends>
                 </field>
-                <field id="default_description" translate="label" type="textarea" sortOrder="14" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="tax_class" translate="label" type="select" sortOrder="30" showInDefault="1" showInWebsite="1" canRestore="1">
+                    <label>Tax Class</label>
+                    <source_model>Magento\Tax\Model\TaxClass\Source\Product</source_model>
+                    <depends>
+                        <field id="enabled">1</field>
+                    </depends>
+                </field>
+                <field id="default_description" translate="label" type="textarea" sortOrder="40" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Default Description</label>
+                    <depends>
+                        <field id="enabled">1</field>
+                    </depends>
                 </field>
-                <field id="fee" translate="label" type="text" sortOrder="15" showInDefault="1" showInWebsite="1" showInStore="1">
+                <field id="fee" translate="label" type="text" sortOrder="50" showInDefault="1" showInWebsite="1" showInStore="1">
                     <label>Fee</label>
                     <frontend_model>Boolfly\PaymentFee\Block\Adminhtml\System\Form\Field\PaymentFee</frontend_model>
                     <backend_model>Magento\Config\Model\Config\Backend\Serialized\ArraySerialized</backend_model>
+                    <depends>
+                        <field id="enabled">1</field>
+                    </depends>
                 </field>
             </group>
         </section>

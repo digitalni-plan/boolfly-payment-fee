@@ -6,59 +6,35 @@ use InvalidArgumentException;
 use Magento\Directory\Model\PriceCurrency;
 use Magento\Framework\App\Helper\AbstractHelper;
 use Magento\Framework\App\Helper\Context;
+use Magento\Framework\DataObject;
 use Magento\Framework\ObjectManagerInterface;
 use Magento\Framework\Serialize\SerializerInterface;
 use Magento\Framework\Unserialize\Unserialize;
 use Magento\Quote\Model\Quote;
 use Magento\Shipping\Model\Carrier\AbstractCarrier;
 use Magento\Store\Model\ScopeInterface;
+use Magento\Framework\Pricing\Helper\Data as PricingHelper;
+use Psr\Log\LoggerInterface;
+use Magento\Catalog\Helper\Data as CatalogHelper;
 
 class Data extends AbstractHelper
 {
-    /**
-     * Recipient fixed amount of custom payment config path
-     */
     const CONFIG_PAYMENT_FEE = 'paymentfee/config/';
-    /**
-     * Total Code
-     */
     const TOTAL_CODE = 'fee_amount';
-    /**
-     * @var array
-     */
-    public $methodFee = null;
-    /**
-     * Constructor
-     */
 
-    /**
-     * @var SerializerInterface
-     */
-    protected $serializer;
-    /**
-     * @var Data
-     */
-    protected $pricingHelper;
-    /**
-     * @var PriceCurrency
-     */
-    protected $priceCurrency;
-    /**
-     * @var LoggerInterface
-     */
-    protected $logger;
+    public ?array $methodFee = null;
 
-    /**
-     * Data constructor.
-     * @param Context $context
-     * @param ObjectManagerInterface $objectManager
-     * @param \Magento\Framework\Pricing\Helper\Data $pricingHelper
-     * @param PriceCurrency $priceCurrency
-     */
+    protected SerializerInterface $serializer;
+    protected PricingHelper $pricingHelper;
+    protected PriceCurrency $priceCurrency;
+    protected ?LoggerInterface $logger;
+    private CatalogHelper $catalogHelper;
+
     public function __construct(
         Context $context,
         ObjectManagerInterface $objectManager,
-        \Magento\Framework\Pricing\Helper\Data $pricingHelper,
+        PricingHelper $pricingHelper,
+        CatalogHelper $catalogHelper,
         PriceCurrency $priceCurrency
     ) {
         parent::__construct($context);
@@ -73,13 +49,13 @@ class Data extends AbstractHelper
         $this->pricingHelper = $pricingHelper;
         $this->priceCurrency = $priceCurrency;
         $this->logger = $context->getLogger();
+        $this->catalogHelper = $catalogHelper;
     }
 
     /**
      * Retrieve Payment Method Fees from Store Config
-     * @return array
      */
-    protected function _getMethodFee()
+    protected function _getMethodFee(): ?array
     {
         if (is_null($this->methodFee)) {
             try {
@@ -106,7 +82,7 @@ class Data extends AbstractHelper
      * @param string $field
      * @return mixed|null
      */
-    public function getConfig($field = '')
+    public function getConfig(string $field = '')
     {
         if ($field) {
             $storeScope = ScopeInterface::SCOPE_STORE;
@@ -117,35 +93,32 @@ class Data extends AbstractHelper
 
     /**
      * Check if Extension is Enabled config
-     * @return bool
      */
-    public function isEnabled()
+    public function isEnabled(): bool
     {
-        return $this->getConfig('enabled');
+        return (bool) $this->getConfig('enabled');
     }
-    /**
-     * @param Quote $quote
-     * @return bool
-     */
-    public function canApply(Quote $quote)
-    {
 
-        /**@TODO check module or config**/
-        if ($this->isEnabled()) {
-            if ($method = $quote->getPayment()->getMethod()) {
-                if (isset($this->methodFee[$method])) {
-                    return true;
-                }
+    public function canApply(Quote $quote): bool
+    {
+        if (!$this->isEnabled()) {
+            return false;
+        }
+
+        if ($method = $quote->getPayment()->getMethod()) {
+            if (isset($this->methodFee[$method])) {
+                return true;
             }
         }
+
         return false;
     }
 
     /**
      * @param Quote $quote
-     * @return float|int
+     * @return float
      */
-    public function getFee(Quote $quote)
+    public function getFee(Quote $quote): float
     {
         $method  = $quote->getPayment()->getMethod();
         $fee     = $this->methodFee[$method]['fee'];
@@ -156,18 +129,75 @@ class Data extends AbstractHelper
             $fee = $subTotal * ($fee / 100);
         }
 
-        // $fee = $this->pricingHelper->currency($fee, false, false);
-        $fee = $this->priceCurrency->round($fee);
+        // Add tax to fee amount
+        $fee += $this->getTaxAmountOnFee($fee, $quote);
 
-        return $fee;
+        // $fee = $this->pricingHelper->currency($fee, false, false);
+        return $this->priceCurrency->round($fee);
+    }
+
+    public function getTaxAmountOnFee($feeAmount, Quote $quote): float {
+        $taxClass = $this->getTaxClass();
+        $billingAddress  = $quote->getBillingAddress();
+        $shippingAddress = $quote->getShippingAddress();
+
+        if (!$feeAmount || !$taxClass) {
+            return 0;
+        }
+
+        $pseudoProduct = new DataObject();
+        $pseudoProduct->setTaxClassId($taxClass);
+
+        $amountWithTax = (float) $this->catalogHelper->getTaxPrice(
+            $pseudoProduct,
+            $feeAmount,
+            true,
+            $shippingAddress,
+            $billingAddress,
+            null,
+            null,
+            false
+        );
+
+        return $amountWithTax - $feeAmount;
+    }
+
+    public function getTaxAmountFromFee($feeAmountInclTax, Quote $quote): float {
+        $taxClass = $this->getTaxClass();
+        $billingAddress  = $quote->getBillingAddress();
+        $shippingAddress = $quote->getShippingAddress();
+
+        if (!$feeAmountInclTax || !$taxClass) {
+            return 0;
+        }
+
+        $pseudoProduct = new DataObject();
+        $pseudoProduct->setTaxClassId($taxClass);
+
+        $amountExclTax = (float) $this->catalogHelper->getTaxPrice(
+            $pseudoProduct,
+            $feeAmountInclTax,
+            false,
+            $shippingAddress,
+            $billingAddress,
+            null,
+            null,
+            true
+        );
+
+        return $feeAmountInclTax - $amountExclTax;
     }
 
     /**
      * Retrieve Fee type from Store config (Percent or Fixed)
-     * @return string
      */
-    public function getFeeType()
+    public function getFeeType(): string
     {
-        return $this->getConfig('fee_type');
+        return (string) $this->getConfig('fee_type');
+    }
+
+    public function getTaxClass(): int
+    {
+        return (int) $this->getConfig('tax_class');
     }
 }
